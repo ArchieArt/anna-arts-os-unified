@@ -1,0 +1,574 @@
+// This is your Prisma schema file.
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// USER & AUTHENTICATION
+// ============================================================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String?   // For credentials auth (hashed)
+
+  // Role-based relationships
+  artist        Artist?
+  sponsor       Sponsor?
+  customer      Customer?
+
+  // Auth sessions
+  accounts      Account[]
+  sessions      Session[]
+
+  // Audit trail
+  auditLogs     AuditLog[]
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([email])
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?
+  access_token       String?
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  sessionToken String @unique
+  userId    String
+  expires   DateTime
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ============================================================================
+// ARTIST PROFILE
+// ============================================================================
+
+model Artist {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  profileName           String
+  bioStatement          String    @db.Text
+  profileImageUrl       String?
+  
+  // AI-Generated insights
+  styleFingerprint      Json?     // {colorPalette: [], composition: "", emotionalTone: "", uniquenessScore: 0.87}
+  trendFitScore         Float     @default(0.0) // 0-1.0
+  competitivePosition   Json?     // {marketSegment, priceRange, demand}
+  hiddenOpportunities   Json?     // AI-discovered revenue opportunities
+  
+  // Verification & Status
+  verificationStatus    String    @default("PENDING") // PENDING, VERIFIED, FEATURED, SUSPENDED
+  tier                  String    @default("FREE") // FREE, PRO, MASTER
+  
+  // Financial metrics
+  monthlyMRR            Int       @default(0) // Revenue in cents
+  totalLifetimeRevenue  Int       @default(0)
+  
+  // Psychometrics
+  big5Scores            Json?     // {openness, conscientiousness, extraversion, agreeableness, neuroticism} (0-100 scale)
+  
+  // Relationships
+  portfolios            Portfolio[]
+  sales                 Sale[]
+  subscriptions         ArtistSubscription[]
+  grantMatches          GrantArtistMatch[]
+  sponsorMatches        ArtistSponsorMatch[]
+  courses               Course[]
+  events                Event[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([verificationStatus])
+  @@index([tier])
+  @@index([monthlyMRR])
+}
+
+// ============================================================================
+// PORTFOLIO & ARTWORK
+// ============================================================================
+
+model Portfolio {
+  id                    String    @id @default(cuid())
+  artistId              String
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  title                 String
+  description           String    @db.Text
+  imageUrl              String
+  imageHash             String    // For deduplication
+  
+  // AI Analysis
+  aiAnalysis            Json?     // {style, emotionalTone, marketDemand, estimatedPrice, trendMatch}
+  engagementMetrics     Json?     // {views, saves, shares, avgTimeSpent, clickThroughRate}
+  
+  // AR/Web3
+  arModelUrl            String?   // 3D model for AR visualization
+  nftMintedAddress      String?   // If minted as NFT
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([artistId])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// SPONSOR PROFILE (Donors/Patrons/Foundations)
+// ============================================================================
+
+model Sponsor {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                  String
+  email                 String    @unique
+  organizationName      String?   // If corporate/foundation
+  
+  // Wealth & giving info
+  netWorth              Int?      // In cents; from wealth screening
+  givenTotalAmount      Int       @default(0) // Lifetime giving in cents
+  givenCount            Int       @default(0) // Number of gifts
+  
+  // Psychographic profile
+  sponsorSegment        String?   // LEGACY_BUILDER, IMPACT_MAXIMIZER, SOCIAL_CONNECTOR, COLLECTOR
+  big5Scores            Json?     // Personality inference
+  givingMotivations     Json?     // {emotional, utilitarian, social, legacy}
+  
+  // Predictive scores (0-100)
+  lifetimeValueScore    Int       @default(0)
+  majorGiftProbability  Float     @default(0.0) // 0-1.0
+  churnRisk             Float     @default(0.0) // 0-1.0
+  
+  // Preferences
+  preferredChannels     Json?     // {email, sms, directMail, events}
+  communicationFrequency String   @default("WEEKLY") // WEEKLY, BIWEEKLY, MONTHLY
+  
+  // Relationships
+  gifts                 Gift[]
+  artistMatches         ArtistSponsorMatch[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([sponsorSegment])
+  @@index([lifetimeValueScore])
+  @@index([churnRisk])
+}
+
+// ============================================================================
+// CUSTOMER PROFILE (Buyers/Program Participants)
+// ============================================================================
+
+model Customer {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName             String
+  lastName              String
+  email                 String    @unique
+  phone                 String?
+  
+  // Purchase history
+  totalSpent            Int       @default(0) // In cents
+  purchaseCount         Int       @default(0)
+  averageOrderValue     Int       @default(0)
+  
+  // Engagement
+  enrolledCourses       CourseEnrollment[]
+  purchasedItems        Purchase[]
+  eventAttendances      EventAttendee[]
+  
+  // Preferences
+  favoriteArtists       String[]  @default([]) // Array of artist IDs
+  interests             String[]  @default([]) // Art styles, mediums, topics
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([email])
+  @@index([totalSpent])
+}
+
+// ============================================================================
+// ARTIST-SPONSOR MATCHING
+// ============================================================================
+
+model ArtistSponsorMatch {
+  id                    String    @id @default(cuid())
+  artistId              String
+  sponsorId             String
+  
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  sponsor               Sponsor   @relation(fields: [sponsorId], references: [id], onDelete: Cascade)
+
+  matchScore            Float     // 0-1.0 (ML-computed compatibility)
+  reasoning             String    @db.Text // AI explanation: "Both high openness, sponsor collects contemporary realism"
+  recommendedAskAmount  Int       // In cents
+  recommendedTiming     DateTime  // When to make the ask
+  
+  status                String    @default("PENDING") // PENDING, CONTACTED, CONVERTED, REJECTED, LAPSED
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([artistId, sponsorId])
+  @@index([status])
+  @@index([matchScore])
+}
+
+// ============================================================================
+// GIFTS & DONATIONS
+// ============================================================================
+
+model Gift {
+  id                    String    @id @default(cuid())
+  sponsorId             String
+  sponsor               Sponsor   @relation(fields: [sponsorId], references: [id], onDelete: Cascade)
+
+  amount                Int       // In cents
+  currency              String    @default("USD")
+  
+  allocationType        String    // DIRECT_ARTIST, GRANT_POOL, GENERAL, EVENT, SCHOLARSHIP
+  giftToArtistId        String?   // If directly supporting an artist
+  
+  // Payment
+  stripePaymentId       String    @unique
+  status                String    @default("COMPLETED") // PENDING, COMPLETED, FAILED, REFUNDED
+  
+  // Personalization
+  personalizedMessage   String?   @db.Text
+  impactVideoUrl        String?   // Personalized impact video URL
+  
+  isRecurring           Boolean   @default(false)
+  recurringFrequency    String?   // MONTHLY, QUARTERLY, ANNUAL
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([sponsorId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// SALES & E-COMMERCE
+// ============================================================================
+
+model Sale {
+  id                    String    @id @default(cuid())
+  artistId              String
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  saleType              String    // ORIGINAL, PRINT, DIGITAL, SERVICE, COMMISSION, NFT, SUBSCRIPTION
+  amount                Int       // In cents (total sale price)
+  commission            Int       // In cents (platform commission)
+  artistPayout          Int       // In cents (what artist receives)
+  
+  currency              String    @default("USD")
+  buyerEmail            String
+  
+  // Payment
+  stripeChargeId        String    @unique
+  status                String    @default("COMPLETED") // PENDING, COMPLETED, FAILED, REFUNDED
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([artistId])
+  @@index([saleType])
+  @@index([status])
+}
+
+model Purchase {
+  id                    String    @id @default(cuid())
+  customerId            String
+  customer              Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  itemId                String    // Reference to artwork, course, etc.
+  itemType              String    // ARTWORK, DIGITAL_DOWNLOAD, COURSE, MERCHANDISE
+  amount                Int       // In cents
+  
+  stripeChargeId        String    @unique
+  status                String    @default("COMPLETED")
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([itemType])
+}
+
+// ============================================================================
+// SUBSCRIPTIONS & TIERS
+// ============================================================================
+
+model ArtistSubscription {
+  id                    String    @id @default(cuid())
+  artistId              String
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  tier                  String    // FREE, PRO, MASTER
+  stripePriceId         String
+  stripeSubscriptionId  String    @unique
+  
+  status                String    @default("ACTIVE") // ACTIVE, PAUSED, CANCELED, PAST_DUE
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  
+  canceledAt            DateTime?
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([artistId])
+  @@index([status])
+}
+
+// ============================================================================
+// GRANTS & OPPORTUNITIES
+// ============================================================================
+
+model Grant {
+  id                    String    @id @default(cuid())
+  externalId            String    @unique // From grant database
+  name                  String
+  description           String    @db.Text
+  
+  funder                String    // Foundation name
+  fundingAmount         Int       // In cents
+  deadline              DateTime
+  
+  eligibility           Json      // Parsed requirements
+  aiSummary             String    @db.Text // Claude-generated short summary
+  
+  // Matching
+  artistMatches         GrantArtistMatch[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([deadline])
+  @@index([funder])
+}
+
+model GrantArtistMatch {
+  id                    String    @id @default(cuid())
+  grantId               String
+  artistId              String
+  
+  grant                 Grant     @relation(fields: [grantId], references: [id], onDelete: Cascade)
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  matchScore            Float     // 0-1.0
+  reasoning             String    @db.Text // Why this match is good
+  autoDraftNarrative    String?   @db.Text // AI-generated grant response
+  
+  status                String    @default("PENDING") // PENDING, APPLIED, AWARDED, REJECTED
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([grantId, artistId])
+  @@index([status])
+}
+
+// ============================================================================
+// COURSES & EDUCATION
+// ============================================================================
+
+model Course {
+  id                    String    @id @default(cuid())
+  artistId              String    // The artist teaching the course
+  artist                Artist    @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  title                 String
+  description           String    @db.Text
+  imageUrl              String?
+  
+  price                 Int       @default(0) // In cents (free if 0)
+  currency              String    @default("USD")
+  
+  modules               CourseModule[]
+  enrollments           CourseEnrollment[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([artistId])
+}
+
+model CourseModule {
+  id                    String    @id @default(cuid())
+  courseId              String
+  course                Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  title                 String
+  order                 Int
+  videoUrl              String?
+  description           String    @db.Text
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([courseId])
+}
+
+model CourseEnrollment {
+  id                    String    @id @default(cuid())
+  customerId            String
+  courseId              String
+  
+  customer              Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  course                Course    @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  status                String    @default("ENROLLED") // ENROLLED, COMPLETED, DROPPED
+  progressPercent       Int       @default(0)
+  
+  createdAt             DateTime  @default(now())
+  completedAt           DateTime?
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([customerId, courseId])
+  @@index([status])
+}
+
+// ============================================================================
+// EVENTS
+// ============================================================================
+
+model Event {
+  id                    String    @id @default(cuid())
+  organizerId           String?   // Artist or Council organizing
+  
+  title                 String
+  description           String    @db.Text
+  imageUrl              String?
+  
+  eventType             String    // WORKSHOP, GALLERY_OPENING, MARKET, NETWORKING, MASTERCLASS, COURSE_LAUNCH
+  
+  startTime             DateTime
+  endTime               DateTime
+  location              Json      // {lat, lng, address, venueName}
+  
+  capacity              Int
+  registrations         Int       @default(0)
+  
+  attendees             EventAttendee[]
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([eventType])
+  @@index([startTime])
+}
+
+model EventAttendee {
+  id                    String    @id @default(cuid())
+  eventId               String
+  customerId            String
+  
+  event                 Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  customer              Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  status                String    @default("REGISTERED") // REGISTERED, ATTENDED, CANCELED, NO_SHOW
+  
+  @@unique([eventId, customerId])
+  @@index([status])
+}
+
+// ============================================================================
+// AUDIT & ANALYTICS
+// ============================================================================
+
+model AuditLog {
+  id                    String    @id @default(cuid())
+  userId                String?
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action                String    // CREATE, UPDATE, DELETE, PURCHASE, GIFT
+  entity                String    // Artist, Sponsor, Customer, Sale, Gift
+  entityId              String
+  
+  changes               Json?     // What changed {field: {oldValue, newValue}}
+  
+  timestamp             DateTime  @default(now())
+
+  @@index([userId])
+  @@index([timestamp])
+  @@index([entity])
+}
+
+model AnalyticsEvent {
+  id                    String    @id @default(cuid())
+  userId                String?
+  
+  eventName             String    // page_view, button_click, purchase, course_start
+  properties            Json?     // Contextual data
+  
+  timestamp             DateTime  @default(now())
+
+  @@index([userId])
+  @@index([eventName])
+  @@index([timestamp])
+}
+
+// ============================================================================
+// AGENT STATE & REASONING
+// ============================================================================
+
+model AgentDecision {
+  id                    String    @id @default(cuid())
+  
+  eventType             String    // artist_milestone, sponsor_opportunity, trend_alert, grant_window
+  triggeredBy           String?   // Artist/Sponsor ID or system event
+  
+  agentReasoning        String    @db.Text // Full reasoning chain from multi-agent orchestration
+  decision              String    // Recommended action
+  confidence            Float     // 0-1.0
+  
+  executed              Boolean   @default(false)
+  executedAt            DateTime?
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([eventType])
+  @@index([executed])
+}
